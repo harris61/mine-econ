@@ -136,9 +136,9 @@ def fmt_pct(value):
 
 
 
-st.set_page_config(page_title='Portfolio Optimizer', layout='wide')
+st.set_page_config(page_title='Commodity Portofolio Optimizer', layout='wide')
 
-st.title('Portfolio Optimizer')
+st.title('Commodity Portofolio Optimizer')
 
 with st.sidebar:
     st.header('Inputs')
@@ -282,7 +282,7 @@ fig, ax = plt.subplots()
 ax.scatter(asset_risks, asset_rets, color='#2a7ea0', label='Assets')
 for name, x, y in zip(assets, asset_risks, asset_rets):
     ax.annotate(name, (x, y), textcoords='offset points', xytext=(5, 5), fontsize=8)
-ax.scatter([risk], [exp_return], color='red', label='Portfolio', zorder=5)
+ax.scatter([risk], [exp_return], color='red', label='Portofolio', zorder=5)
 ax.annotate('Portofolio', (risk, exp_return), textcoords='offset points', xytext=(6, -10), fontsize=9, color='red')
 ax.set_xlabel('Risk (annual)')
 ax.set_ylabel('Expected Return (annual)')
