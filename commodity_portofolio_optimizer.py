@@ -142,7 +142,9 @@ st.title('Commodity Portofolio Optimizer')
 
 with st.sidebar:
     st.header('Inputs')
-    st.caption('Data source: Minerba Harga Acuan')
+    st.caption('Data source: Harga Minerba Acuan')
+    if st.button('Refresh data'):
+        load_minerba_prices.clear()
 
 end_month = pd.Timestamp.today()
 end_mm_yyyy = f"{end_month.month:02d}/{end_month.year}"
