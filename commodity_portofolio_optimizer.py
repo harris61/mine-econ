@@ -161,10 +161,7 @@ if raw_prices.empty:
 all_assets = list(raw_prices.columns)
 
 with st.sidebar:
-    defaults = [a for a in DEFAULT_ASSETS if a in all_assets]
-    if not defaults:
-        defaults = all_assets[:4]
-    assets = st.multiselect('Assets', all_assets, default=defaults)
+    assets = st.multiselect('Assets', all_assets, default=[])
     date_options = list(raw_prices.index)
     def fmt_period(dt_value):
         return f"{MONTH_NAMES.get(dt_value.month, dt_value.month)} {dt_value.year}"
@@ -172,7 +169,24 @@ with st.sidebar:
     to_date = st.selectbox('To period', date_options, index=len(date_options) - 1, format_func=fmt_period)
 
 if len(assets) < 2:
-    st.warning('Select at least 2 assets.')
+    st.header('Welcome')
+    st.markdown(
+        """
+This app builds a commodity portfolio using Minerba Harga Acuan data and modern portfolio math.
+
+**Core logic (simple):**
+- **Prices → Returns**: convert monthly prices into log returns.
+- **Returns → Risk**: compute covariance matrix to capture correlation effects.
+- **Optimization**: pick weights to hit a **target return** or **target risk**.
+
+**Why return is bounded but risk can drop below any single asset:**
+- **Return** is a weighted average: it cannot exceed the highest asset return (long-only).
+- **Risk** uses covariance: if assets move differently, their ups/downs cancel out, so the
+  portfolio can be less risky than any single asset.
+        """
+    )
+
+    st.info('Select at least 2 commodities in the sidebar to start.')
     st.stop()
 
 price_df = raw_prices[assets]
@@ -230,6 +244,14 @@ bounds = [(min_weight, max_weight)] * len(assets)
 
 if mode == 'Target Return':
     target_return = target_return_pct / 100
+    max_return = float(np.max(mu))
+    min_return = float(np.min(mu))
+    if target_return > max_return:
+        st.error('Maximum Return exceeded.')
+        st.stop()
+    if target_return < min_return:
+        st.error('Minimum Return exceeded.')
+        st.stop()
     res = optimize_target_return(mu, cov, target_return, bounds)
     if not res.success:
         st.error(f'Optimization failed: {res.message}')
