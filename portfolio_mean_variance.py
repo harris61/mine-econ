@@ -81,14 +81,14 @@ def optimize_target_return(mu, cov, target_return, bounds):
     return res
 
 
-def optimize_target_vol(mu, cov, target_vol, bounds):
+def optimize_target_risk(mu, cov, target_risk, bounds):
     n = len(mu)
 
-    def port_vol(w):
+    def port_risk(w):
         return np.sqrt(w.T @ cov @ w)
 
     def objective(w):
-        return (port_vol(w) - target_vol) ** 2
+        return (port_risk(w) - target_risk) ** 2
 
     cons = (
         {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
@@ -104,7 +104,7 @@ def main():
     parser.add_argument('--sheet', default='HBA HMA')
     parser.add_argument('--assets', default='Emas,Perak,Besi,Tembaga')
     parser.add_argument('--target-return', type=float, default=None)
-    parser.add_argument('--target-vol', type=float, default=0.12)
+    parser.add_argument('--target-risk', type=float, default=0.12)
     parser.add_argument('--min-weight', type=float, default=0.05)
     parser.add_argument('--max-weight', type=float, default=0.50)
     args = parser.parse_args()
@@ -134,29 +134,29 @@ def main():
     w_ret = res_ret.x
 
     exp_ret = w_ret @ mu
-    vol_ret = np.sqrt(w_ret.T @ cov @ w_ret)
+    risk_ret = np.sqrt(w_ret.T @ cov @ w_ret)
 
     print('\nTarget return optimization')
     print('Target return:', f'{target_return:.2%}')
     for name, w in zip(assets, w_ret):
         print(f'  {name}: {w:.2%}')
     print(f'  Expected return: {exp_ret:.2%}')
-    print(f'  Volatility: {vol_ret:.2%}')
+    print(f'  Risk: {risk_ret:.2%}')
 
-    res_vol = optimize_target_vol(mu, cov, args.target_vol, bounds)
-    if not res_vol.success:
-        print('Target vol optimization failed:', res_vol.message)
-    w_vol = res_vol.x
+    res_risk = optimize_target_risk(mu, cov, args.target_risk, bounds)
+    if not res_risk.success:
+        print('Target risk optimization failed:', res_risk.message)
+    w_risk = res_risk.x
 
-    exp_ret2 = w_vol @ mu
-    vol2 = np.sqrt(w_vol.T @ cov @ w_vol)
+    exp_ret2 = w_risk @ mu
+    risk2 = np.sqrt(w_risk.T @ cov @ w_risk)
 
-    print('\nTarget volatility optimization')
-    print('Target volatility:', f'{args.target_vol:.2%}')
-    for name, w in zip(assets, w_vol):
+    print('\nTarget risk optimization')
+    print('Target risk:', f'{args.target_risk:.2%}')
+    for name, w in zip(assets, w_risk):
         print(f'  {name}: {w:.2%}')
     print(f'  Expected return: {exp_ret2:.2%}')
-    print(f'  Volatility: {vol2:.2%}')
+    print(f'  Risk: {risk2:.2%}')
 
 
 if __name__ == '__main__':
