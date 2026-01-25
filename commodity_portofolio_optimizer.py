@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -8,6 +9,7 @@ from io import StringIO
 
 
 MINERBA_URL = 'https://www.minerba.esdm.go.id/harga_acuan'
+CACHE_FILE = os.path.join(os.path.dirname(__file__), 'price_cache.csv')
 
 MONTH_MAP = {
     'Januari': 1,
@@ -47,8 +49,8 @@ def parse_minerba_column(col_name):
     return pd.Timestamp(year=year, month=month, day=1)
 
 
-@st.cache_data
-def load_minerba_prices(start_mm_yyyy, end_mm_yyyy):
+def fetch_minerba_prices(start_mm_yyyy, end_mm_yyyy):
+    """Fetch prices from Minerba API for the given date range."""
     session = requests.Session()
     html = session.get(MINERBA_URL, timeout=20).text
     match = re.search(r'name=\"csrf_test_name\" value=\"([^\"]+)\"', html)
@@ -67,9 +69,7 @@ def load_minerba_prices(start_mm_yyyy, end_mm_yyyy):
     if 'Komoditas' not in df.columns:
         return pd.DataFrame()
     df = df.set_index('Komoditas')
-    # Convert values to numeric
     df = df.apply(pd.to_numeric, errors='coerce')
-    # Melt into long format
     long_rows = []
     for col in df.columns:
         date = parse_minerba_column(col)
@@ -81,10 +81,47 @@ def load_minerba_prices(start_mm_yyyy, end_mm_yyyy):
     if not long_rows:
         return pd.DataFrame()
     long_df = pd.DataFrame(long_rows)
-    # Average across periods within the same month
     grouped = long_df.groupby(['Komoditas', 'Date'], as_index=False)['Value'].mean()
     pivot = grouped.pivot(index='Date', columns='Komoditas', values='Value').sort_index()
     return pivot
+
+
+def load_minerba_prices():
+    """Load prices with file-based caching. Only fetches new data since last cache."""
+    current_month = pd.Timestamp.today().replace(day=1)
+    cached_df = None
+
+    # Load existing cache
+    if os.path.exists(CACHE_FILE):
+        try:
+            cached_df = pd.read_csv(CACHE_FILE, index_col=0, parse_dates=True)
+        except Exception:
+            cached_df = None
+
+    if cached_df is not None and not cached_df.empty:
+        last_cached = cached_df.index.max()
+        # If cache is current, return it
+        if last_cached >= current_month:
+            return cached_df
+        # Fetch only missing data (from last cached month to now)
+        start_mm_yyyy = f"{last_cached.month:02d}/{last_cached.year}"
+        end_mm_yyyy = f"{current_month.month:02d}/{current_month.year}"
+        new_data = fetch_minerba_prices(start_mm_yyyy, end_mm_yyyy)
+        if not new_data.empty:
+            # Merge: new data overwrites overlapping dates
+            combined = pd.concat([cached_df, new_data])
+            combined = combined[~combined.index.duplicated(keep='last')].sort_index()
+            combined.to_csv(CACHE_FILE)
+            return combined
+        return cached_df
+    else:
+        # No cache, fetch all historical data
+        start_mm_yyyy = "01/2017"
+        end_mm_yyyy = f"{current_month.month:02d}/{current_month.year}"
+        full_data = fetch_minerba_prices(start_mm_yyyy, end_mm_yyyy)
+        if not full_data.empty:
+            full_data.to_csv(CACHE_FILE)
+        return full_data
 
 
 def compute_log_returns(price_df):
@@ -136,22 +173,46 @@ def fmt_pct(value):
 
 
 
-st.set_page_config(page_title='Commodity Portofolio Optimizer', layout='wide')
+st.set_page_config(
+    page_title='Commodity Portofolio Optimizer',
+    layout='wide',
+    initial_sidebar_state='expanded',
+)
+
+st.markdown(
+    """
+    <style>
+        [data-testid="collapsedControl"] {
+            display: none !important;
+        }
+        [data-testid="stSidebarCollapseButton"] {
+            display: none !important;
+        }
+        button[kind="headerNoPadding"] {
+            display: none !important;
+        }
+        .st-emotion-cache-1gwvy71 {
+            display: none !important;
+        }
+        [data-testid="stSidebar"] > div:first-child {
+            width: 350px;
+        }
+        section[data-testid="stSidebar"] button[aria-label="Close sidebar"] {
+            display: none !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.title('Commodity Portofolio Optimizer')
 
 with st.sidebar:
     st.header('Inputs')
     st.caption('Data source: Harga Minerba Acuan')
-    if st.button('Refresh data'):
-        load_minerba_prices.clear()
-
-end_month = pd.Timestamp.today()
-end_mm_yyyy = f"{end_month.month:02d}/{end_month.year}"
-start_mm_yyyy = "01/2017"
 
 try:
-    raw_prices = load_minerba_prices(start_mm_yyyy, end_mm_yyyy)
+    raw_prices = load_minerba_prices()
 except Exception as exc:
     st.error(f'Failed to load Minerba data: {exc}')
     st.stop()
@@ -180,13 +241,67 @@ This app builds a commodity portfolio using Minerba Harga Acuan data and modern 
 - **Prices → Returns**: convert monthly prices into log returns.
 - **Returns → Risk**: compute covariance matrix to capture correlation effects.
 - **Optimization**: pick weights to hit a **target return** or **target risk**.
-
-**Why return is bounded but risk can drop below any single asset:**
-- **Return** is a weighted average: it cannot exceed the highest asset return (long-only).
-- **Risk** uses covariance: if assets move differently, their ups/downs cancel out, so the
-  portfolio can be less risky than any single asset.
         """
     )
+
+    with st.expander('Why can portfolio risk be lower than any individual asset?', expanded=True):
+        st.markdown(
+            r"""
+**The Short Answer:** Diversification. When assets don't move perfectly together,
+their price movements partially cancel out, reducing overall portfolio volatility.
+
+---
+
+**The Math Behind It**
+
+For a portfolio of $n$ assets with weights $w_i$, the portfolio variance is:
+
+$$\sigma_p^2 = \sum_{i=1}^{n} \sum_{j=1}^{n} w_i w_j \sigma_{ij}$$
+
+This can be rewritten as:
+
+$$\sigma_p^2 = \sum_{i=1}^{n} w_i^2 \sigma_i^2 + 2\sum_{i<j} w_i w_j \sigma_{ij}$$
+
+Where:
+- $\sigma_i^2$ = variance of asset $i$
+- $\sigma_{ij} = \rho_{ij} \sigma_i \sigma_j$ = covariance between assets $i$ and $j$
+- $\rho_{ij}$ = correlation coefficient between assets $i$ and $j$ (ranges from -1 to +1)
+
+**The key insight:** When $\rho_{ij} < 1$, the cross-terms $\sigma_{ij}$ are smaller than $\sigma_i \sigma_j$,
+which pulls down the total portfolio variance below what you'd expect from a simple weighted average.
+
+---
+
+**Simple Two-Asset Example**
+
+For two assets with equal weights ($w_1 = w_2 = 0.5$):
+
+$$\sigma_p^2 = 0.25\sigma_1^2 + 0.25\sigma_2^2 + 0.5\rho_{12}\sigma_1\sigma_2$$
+
+If both assets have 20% risk ($\sigma_1 = \sigma_2 = 0.2$):
+
+| Correlation ($\rho$) | Portfolio Risk ($\sigma_p$) |
+|:---:|:---:|
+| +1.0 (perfect positive) | 20.0% |
+| +0.5 | 17.3% |
+| 0.0 (uncorrelated) | 14.1% |
+| -0.5 | 10.0% |
+| -1.0 (perfect negative) | 0.0% |
+
+---
+
+**Intuitive Understanding**
+
+Think of it like this:
+- **Correlation = +1**: Both assets always move together. No benefit from diversification.
+- **Correlation = 0**: Assets move independently. When one zigs, the other might zag, smoothing out the bumps.
+- **Correlation = -1**: Assets move in opposite directions. They perfectly offset each other.
+
+In the real world, most commodities have correlations between 0 and +1.
+This is why a well-constructed portfolio can achieve lower risk than holding any single commodity alone,
+while still capturing the average returns of its components.
+            """
+        )
 
     st.info('Select at least 2 commodities in the sidebar to start.')
     st.stop()
