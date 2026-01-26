@@ -6,6 +6,7 @@ from scipy.optimize import minimize
 import re
 import requests
 from io import StringIO
+import matplotlib.pyplot as plt
 
 
 MINERBA_URL = 'https://www.minerba.esdm.go.id/harga_acuan'
@@ -38,15 +39,21 @@ DEFAULT_ASSETS = [
 
 
 def parse_minerba_column(col_name):
-    match = re.search(r'([A-Za-z]+)\s+(\d{4})', col_name)
+    match = re.search(r'([A-Za-z]+)\s+(?:(I{1,3}|[12])\s+)?(\d{4})', col_name)
     if not match:
         return None
     month_name = match.group(1)
-    year = int(match.group(2))
+    half_marker = match.group(2)
+    year = int(match.group(3))
     month = MONTH_MAP.get(month_name)
     if not month:
         return None
-    return pd.Timestamp(year=year, month=month, day=1)
+    day = 1
+    if half_marker:
+        half_marker = half_marker.upper()
+        if half_marker in ('II', '2'):
+            day = 16
+    return pd.Timestamp(year=year, month=month, day=day)
 
 
 def fetch_minerba_prices(start_mm_yyyy, end_mm_yyyy):
@@ -128,7 +135,22 @@ def compute_log_returns(price_df):
     return np.log(price_df / price_df.shift(1)).dropna(how='any')
 
 
-def annualize_mean_cov(returns_df, periods_per_year=12):
+def infer_periods_per_year(index):
+    if len(index) < 2:
+        return 12
+    deltas = np.diff(index.values).astype('timedelta64[D]').astype(int)
+    deltas = deltas[deltas > 0]
+    if len(deltas) == 0:
+        return 12
+    median_days = np.median(deltas)
+    if median_days <= 0:
+        return 12
+    return max(1, int(round(365.25 / median_days)))
+
+
+def annualize_mean_cov(returns_df, periods_per_year=None):
+    if periods_per_year is None:
+        periods_per_year = infer_periods_per_year(returns_df.index)
     mu = returns_df.mean() * periods_per_year
     cov = returns_df.cov() * periods_per_year
     return mu.values, cov.values, mu
@@ -226,16 +248,43 @@ all_assets = list(raw_prices.columns)
 with st.sidebar:
     assets = st.multiselect('Assets', all_assets, default=[])
     date_options = list(raw_prices.index)
+    month_counts = {}
+    for dt_value in date_options:
+        key = (dt_value.year, dt_value.month)
+        month_counts[key] = month_counts.get(key, 0) + 1
+    month_seen = {}
+    date_labels = []
+    for dt_value in date_options:
+        key = (dt_value.year, dt_value.month)
+        month_seen[key] = month_seen.get(key, 0) + 1
+        base = f"{MONTH_NAMES.get(dt_value.month, dt_value.month)} {dt_value.year}"
+        if month_counts[key] > 1:
+            label = f"{base} ({month_seen[key]})"
+        else:
+            label = base
+        date_labels.append(label)
     def fmt_period(dt_value):
         return f"{MONTH_NAMES.get(dt_value.month, dt_value.month)} {dt_value.year}"
-    from_date = st.selectbox('From period', date_options, index=0, format_func=fmt_period)
-    to_date = st.selectbox('To period', date_options, index=len(date_options) - 1, format_func=fmt_period)
+    from_idx = st.selectbox(
+        'From period',
+        list(range(len(date_options))),
+        index=0,
+        format_func=lambda i: date_labels[i],
+    )
+    to_idx = st.selectbox(
+        'To period',
+        list(range(len(date_options))),
+        index=len(date_options) - 1,
+        format_func=lambda i: date_labels[i],
+    )
+    from_date = date_options[from_idx]
+    to_date = date_options[to_idx]
 
 if len(assets) < 2:
     st.header('Welcome')
     st.markdown(
         """
-This app builds a commodity portfolio using Minerba Harga Acuan data and modern portfolio math.
+This app builds a commodity portofolio using Harga Minerba Acuan data and Modern Portofolio Theory.
 
 **Core logic (simple):**
 - **Prices → Returns**: convert monthly prices into log returns.
@@ -244,17 +293,17 @@ This app builds a commodity portfolio using Minerba Harga Acuan data and modern 
         """
     )
 
-    with st.expander('Why can portfolio risk be lower than any individual asset?', expanded=True):
+    with st.expander('Why can portofolio risk be lower than any individual asset?', expanded=True):
         st.markdown(
             r"""
 **The Short Answer:** Diversification. When assets don't move perfectly together,
-their price movements partially cancel out, reducing overall portfolio volatility.
+their price movements partially cancel out, reducing overall portofolio volatility.
 
 ---
 
 **The Math Behind It**
 
-For a portfolio of $n$ assets with weights $w_i$, the portfolio variance is:
+For a portofolio of $n$ assets with weights $w_i$, the portofolio variance is:
 
 $$\sigma_p^2 = \sum_{i=1}^{n} \sum_{j=1}^{n} w_i w_j \sigma_{ij}$$
 
@@ -268,7 +317,7 @@ Where:
 - $\rho_{ij}$ = correlation coefficient between assets $i$ and $j$ (ranges from -1 to +1)
 
 **The key insight:** When $\rho_{ij} < 1$, the cross-terms $\sigma_{ij}$ are smaller than $\sigma_i \sigma_j$,
-which pulls down the total portfolio variance below what you'd expect from a simple weighted average.
+which pulls down the total portofolio variance below what you'd expect from a simple weighted average.
 
 ---
 
@@ -280,7 +329,7 @@ $$\sigma_p^2 = 0.25\sigma_1^2 + 0.25\sigma_2^2 + 0.5\rho_{12}\sigma_1\sigma_2$$
 
 If both assets have 20% risk ($\sigma_1 = \sigma_2 = 0.2$):
 
-| Correlation ($\rho$) | Portfolio Risk ($\sigma_p$) |
+| Correlation ($\rho$) | Portofolio Risk ($\sigma_p$) |
 |:---:|:---:|
 | +1.0 (perfect positive) | 20.0% |
 | +0.5 | 17.3% |
@@ -298,7 +347,7 @@ Think of it like this:
 - **Correlation = -1**: Assets move in opposite directions. They perfectly offset each other.
 
 In the real world, most commodities have correlations between 0 and +1.
-This is why a well-constructed portfolio can achieve lower risk than holding any single commodity alone,
+This is why a well-constructed portofolio can achieve lower risk than holding any single commodity alone,
 while still capturing the average returns of its components.
             """
         )
@@ -414,8 +463,34 @@ weights_df['Weight'] = weights_df['Weight'].apply(fmt_pct)
 
 st.dataframe(weights_df, width='stretch')
 
+st.subheader('Price Chart')
+fig, ax = plt.subplots()
+price_df.plot(ax=ax, linewidth=1.5)
+ax.set_xlabel('Date')
+ax.set_ylabel('Price')
+ax.legend(loc='best', fontsize=8)
+st.pyplot(fig)
+
+st.subheader('Covariance / Correlation Matrix')
+matrix_mode = st.radio('Matrix type', ['Correlation', 'Covariance'], index=0, horizontal=True)
+if matrix_mode == 'Correlation':
+    matrix_df = returns.corr()
+    cmap = 'coolwarm'
+else:
+    matrix_df = pd.DataFrame(cov, index=assets, columns=assets)
+    cmap = 'viridis'
+fig, ax = plt.subplots()
+im = ax.imshow(matrix_df.values, cmap=cmap, vmin=-1 if matrix_mode == 'Correlation' else None, vmax=1 if matrix_mode == 'Correlation' else None)
+ax.set_xticks(range(len(assets)))
+ax.set_yticks(range(len(assets)))
+ax.set_xticklabels(assets, rotation=45, ha='right', fontsize=8)
+ax.set_yticklabels(assets, fontsize=8)
+ax.set_xlabel('Assets')
+ax.set_ylabel('Assets')
+fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+st.pyplot(fig)
+
 st.subheader('Return vs Risk Profile')
-import matplotlib.pyplot as plt
 
 fig, ax = plt.subplots()
 ax.scatter(asset_risks, asset_rets, color='#2a7ea0', label='Assets')
