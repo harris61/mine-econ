@@ -217,10 +217,22 @@ st.markdown(
             display: none !important;
         }
         [data-testid="stSidebar"] > div:first-child {
-            width: 350px;
+            width: 320px;
+            max-width: 320px;
         }
         section[data-testid="stSidebar"] button[aria-label="Close sidebar"] {
             display: none !important;
+        }
+        /* Keep select dropdowns aligned within sidebar width */
+        [data-testid="stSidebar"] .stSelectbox,
+        [data-testid="stSidebar"] .stMultiSelect {
+            width: 100%;
+        }
+        [data-testid="stSidebar"] div[data-baseweb="select"] {
+            max-width: 100%;
+        }
+        [data-testid="stSidebar"] div[data-baseweb="popover"] {
+            max-width: 320px;
         }
     </style>
     """,
@@ -290,6 +302,13 @@ This app builds a commodity portofolio using Harga Minerba Acuan data and Modern
 - **Prices → Returns**: convert monthly prices into log returns.
 - **Returns → Risk**: compute covariance matrix to capture correlation effects.
 - **Optimization**: pick weights to hit a **target return** or **target risk**.
+
+**Usage guide:**
+1. Select at least 2 commodities from the sidebar.
+2. Choose a **From period** and **To period**.
+3. Set min/max weight constraints.
+4. Pick **Target Return** or **Target Risk**.
+5. Adjust the target value and review results.
         """
     )
 
@@ -307,6 +326,47 @@ For a portofolio of $n$ assets with weights $w_i$, the portofolio variance is:
 
 $$\sigma_p^2 = \sum_{i=1}^{n} \sum_{j=1}^{n} w_i w_j \sigma_{ij}$$
 
+In matrix form:
+
+$$\sigma_p^2 = \mathbf{w}^\top \Sigma \mathbf{w}$$
+
+Where $\Sigma$ is the **covariance matrix**:
+- Diagonal entries $\Sigma_{ii}$ are individual asset variances ($\sigma_i^2$).
+- Off-diagonal entries $\Sigma_{ij}$ are covariances (how two assets move together).
+- Lower covariance (or negative covariance) reduces total risk.
+
+**3-asset covariance matrix with real commodities (example, in % units):**
+
+Assume Batubara (Coal), Nikel (Nickel), and Emas (Gold) with weights:
+            """
+        )
+        st.latex(
+            r"""
+\mathbf{w} =
+\begin{bmatrix}
+40\% \\\\
+35\% \\\\
+25\%
+\end{bmatrix}
+            """
+        )
+        st.markdown("Covariance matrix (entries in $\\%^{2}$):")
+        st.latex(
+            r"""
+\Sigma =
+\begin{bmatrix}
+256 & 60 & 30 \\\\
+60 & 625 & 40 \\\\
+30 & 40 & 144
+\end{bmatrix}
+            """
+        )
+        st.markdown("Then:")
+        st.latex(r"\sigma_p^2 = \mathbf{w}^\top \Sigma \mathbf{w} = 156.3225\ \%^{2}")
+        st.markdown("So the portfolio risk is:")
+        st.latex(r"\sigma_p = \sqrt{156.3225}\% \approx 12.50\%")
+        st.markdown(
+            r"""
 This can be rewritten as:
 
 $$\sigma_p^2 = \sum_{i=1}^{n} w_i^2 \sigma_i^2 + 2\sum_{i<j} w_i w_j \sigma_{ij}$$
@@ -446,7 +506,9 @@ metrics_df = pd.DataFrame({
     'Risk': [fmt_pct(v) for v in asset_risks],
     'Sharpe Ratio': np.round(asset_sharpe, 3),
 })
-st.dataframe(metrics_df, width='stretch')
+metrics_df_display = metrics_df.copy()
+metrics_df_display.index = range(1, len(metrics_df_display) + 1)
+st.dataframe(metrics_df_display, width='stretch')
 
 st.subheader('Results')
 
@@ -461,7 +523,9 @@ with col3:
 weights_df = pd.DataFrame({'Asset': assets, 'Weight': w})
 weights_df['Weight'] = weights_df['Weight'].apply(fmt_pct)
 
-st.dataframe(weights_df, width='stretch')
+weights_df_display = weights_df.copy()
+weights_df_display.index = range(1, len(weights_df_display) + 1)
+st.dataframe(weights_df_display, width='stretch')
 
 st.subheader('Price Chart')
 fig, ax = plt.subplots()
@@ -476,11 +540,16 @@ matrix_mode = st.radio('Matrix type', ['Correlation', 'Covariance'], index=0, ho
 if matrix_mode == 'Correlation':
     matrix_df = returns.corr()
     cmap = 'coolwarm'
+    vmin, vmax = -1, 1
+    fmt = '{:.2f}'
 else:
     matrix_df = pd.DataFrame(cov, index=assets, columns=assets)
     cmap = 'viridis'
+    vmin = float(np.nanmin(matrix_df.values))
+    vmax = float(np.nanmax(matrix_df.values))
+    fmt = '{:.2f}'
 fig, ax = plt.subplots()
-im = ax.imshow(matrix_df.values, cmap=cmap, vmin=-1 if matrix_mode == 'Correlation' else None, vmax=1 if matrix_mode == 'Correlation' else None)
+im = ax.imshow(matrix_df.values, cmap=cmap, vmin=vmin, vmax=vmax)
 ax.set_xticks(range(len(assets)))
 ax.set_yticks(range(len(assets)))
 ax.set_xticklabels(assets, rotation=45, ha='right', fontsize=8)
@@ -488,6 +557,23 @@ ax.set_yticklabels(assets, fontsize=8)
 ax.set_xlabel('Assets')
 ax.set_ylabel('Assets')
 fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+# Show values in each cell for readability
+norm = plt.Normalize(vmin=vmin, vmax=vmax)
+cmap_obj = plt.get_cmap(cmap)
+for i in range(matrix_df.shape[0]):
+    for j in range(matrix_df.shape[1]):
+        val = matrix_df.iat[i, j]
+        if pd.isna(val):
+            label = ''
+            color = 'black'
+        else:
+            label = fmt.format(val)
+            rgba = cmap_obj(norm(val))
+            luminance = 0.299 * rgba[0] + 0.587 * rgba[1] + 0.114 * rgba[2]
+            color = 'black' if luminance > 0.6 else 'white'
+        ax.text(j, i, label, ha='center', va='center', fontsize=7, color=color)
+
 st.pyplot(fig)
 
 st.subheader('Return vs Risk Profile')
