@@ -7,6 +7,7 @@ import re
 import requests
 from io import StringIO
 import matplotlib.pyplot as plt
+import base64
 
 
 MINERBA_URL = 'https://www.minerba.esdm.go.id/harga_acuan'
@@ -223,6 +224,50 @@ st.markdown(
         section[data-testid="stSidebar"] button[aria-label="Close sidebar"] {
             display: none !important;
         }
+        .sidebar-card {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 18px 16px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .sidebar-title {
+            font-weight: 700;
+            font-size: 18px;
+            color: #0f172a;
+            margin-bottom: 6px;
+        }
+        .sidebar-version {
+            font-size: 13px;
+            color: #475569;
+            margin-bottom: 12px;
+        }
+        .sidebar-divider {
+            height: 1px;
+            background: #e2e8f0;
+            margin: 8px 0 12px;
+        }
+        .sidebar-caption {
+            font-size: 13px;
+            color: #64748b;
+            margin-top: 6px;
+        }
+        .sidebar-link {
+            display: inline-block;
+            font-weight: 600;
+            color: #0f172a;
+            text-decoration: none;
+            margin-bottom: 8px;
+        }
+        .sidebar-link:hover {
+            text-decoration: underline;
+        }
+        .sidebar-logo-link img {
+            max-width: 180px;
+            height: auto;
+            margin-top: 6px;
+        }
         /* Keep select dropdowns aligned within sidebar width */
         [data-testid="stSidebar"] .stSelectbox,
         [data-testid="stSidebar"] .stMultiSelect {
@@ -241,7 +286,33 @@ st.markdown(
 
 st.title('Commodity Portofolio Optimizer')
 
+def image_to_data_uri(path, mime_type='image/png'):
+    with open(path, 'rb') as f:
+        encoded = base64.b64encode(f.read()).decode('ascii')
+    return f"data:{mime_type};base64,{encoded}"
+
+logo_path = os.path.join(os.path.dirname(__file__), '2.png')
+logo_uri = image_to_data_uri(logo_path) if os.path.exists(logo_path) else ''
+
 with st.sidebar:
+    st.markdown(
+        f"""
+        <div class="sidebar-card">
+            <div class="sidebar-title">Commodity Portofolio Optimizer</div>
+            <div class="sidebar-version">v1.0</div>
+            <div class="sidebar-divider"></div>
+            <div class="sidebar-caption">Created by</div>
+            <a class="sidebar-link" href="https://www.linkedin.com/in/harristio-adam/" target="_blank" rel="noopener noreferrer">
+                Harristio Adam
+            </a>
+            <div class="sidebar-caption">Powered by</div>
+            <a class="sidebar-logo-link" href="https://www.linkedin.com/company/soft-roc/" target="_blank" rel="noopener noreferrer">
+                <img src="{logo_uri}" alt="SOFT ROC" />
+            </a>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.header('Inputs')
     st.caption('Data source: Harga Minerba Acuan')
 
